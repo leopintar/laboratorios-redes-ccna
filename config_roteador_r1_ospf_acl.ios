@@ -1,0 +1,104 @@
+! ==============================================================================
+! ROTEADOR DE BORDA CORPORATIVO (R1) - CISCO IOS (TRILHA CCNAv7)
+! Topologia: Router-on-a-Stick (VLANs), Roteamento OSPFv2, ACL Estendida e NAT
+! Autor: Leonardo de Freitas Pintar
+! ==============================================================================
+
+enable
+configure terminal
+
+! 1. HARDENING BÁSICO E ACESSO REMOTO SEGURO (SSHv2)
+hostname R1-BORDA-MATRIZ
+no ip domain-lookup
+service password-encryption
+enable secret InfraSec@2026
+ip domain-name empresa.local
+
+username admin privilege 15 secret AdminNet@2026
+crypto key generate rsa general-keys modulus 2048
+ip ssh version 2
+
+line con 0
+ logging synchronous
+ login local
+ exec-timeout 5 0
+line vty 0 4
+ transport input ssh
+ login local
+ exec-timeout 5 0
+exit
+
+! 2. SUBINTERFACES (ROUTER-ON-A-STICK) - GATEWAYS DAS VLANS
+interface GigabitEthernet0/0/0
+ description TRUNK_PARA_SW1_DISTRIBUICAO
+ no shutdown
+exit
+
+! VLAN 10 - Infraestrutura e TI
+interface GigabitEthernet0/0/0.10
+ description GATEWAY_VLAN_10_TI
+ encapsulation dot1Q 10
+ ip address 192.168.10.1 255.255.255.0
+ ip nat inside
+exit
+
+! VLAN 20 - Corporativo / Administrativo
+interface GigabitEthernet0/0/0.20
+ description GATEWAY_VLAN_20_CORP
+ encapsulation dot1Q 20
+ ip address 192.168.20.1 255.255.255.0
+ ip access-group ACL_SEGURANCA_CORP in
+ ip nat inside
+exit
+
+! VLAN 30 - Servidores Críticos (AD, DNS, ERP Protheus e GLPI)
+interface GigabitEthernet0/0/0.30
+ description GATEWAY_VLAN_30_SERVIDORES
+ encapsulation dot1Q 30
+ ip address 192.168.30.1 255.255.255.0
+ ip nat inside
+exit
+
+! 3. INTERFACE WAN (LINK COM OPERADORA / ISP)
+interface GigabitEthernet0/0/1
+ description LINK_WAN_EXTERNO
+ ip address 200.100.50.2 255.255.255.252
+ ip nat outside
+ no shutdown
+exit
+
+! 4. ROTEAMENTO DINÂMICO OSPFv2 (SINGLE-AREA 0)
+router ospf 1
+ router-id 1.1.1.1
+ passive-interface default
+ no passive-interface GigabitEthernet0/0/1
+ network 192.168.10.0 0.0.0.255 area 0
+ network 192.168.20.0 0.0.0.255 area 0
+ network 192.168.30.0 0.0.0.255 area 0
+ default-information originate
+exit
+
+! Rota padrão apontando para o Next-Hop da Operadora
+ip route 0.0.0.0 0.0.0.0 200.100.50.1
+
+! 5. POLÍTICAS DE CONTROLE DE ACESSO (ACL ESTENDIDA NOMEADA)
+! Regra: A rede Corporativa (VLAN 20) acessa GLPI/Intranet (80/443) e DNS (53)
+! na VLAN de Servidores, mas é bloqueada de acessar servidores via SSH (22).
+ip access-list extended ACL_SEGURANCA_CORP
+ remark --- Bloqueia tentativa de gerenciamento SSH aos Servidores ---
+ deny tcp 192.168.20.0 0.0.0.255 192.168.30.0 0.0.0.255 eq 22 log
+ remark --- Permite acesso HTTPS/HTTP ao sistema GLPI e Intranet ---
+ permit tcp 192.168.20.0 0.0.0.255 host 192.168.30.10 eq 443
+ permit tcp 192.168.20.0 0.0.0.255 host 192.168.30.10 eq 80
+ remark --- Permite consulta DNS interna ---
+ permit udp 192.168.20.0 0.0.0.255 host 192.168.30.5 eq 53
+ remark --- Libera trafego geral para a Internet ---
+ permit ip 192.168.20.0 0.0.0.255 any
+exit
+
+! 6. CONFIGURAÇÃO DE NAT OVERLOAD (PAT) PARA SAÍDA DE INTERNET
+access-list 1 permit 192.168.0.0 0.0.255.255
+ip nat inside source list 1 interface GigabitEthernet0/0/1 overload
+
+end
+write memory
