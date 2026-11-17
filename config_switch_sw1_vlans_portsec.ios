@@ -1,0 +1,66 @@
+! ==============================================================================
+! SWITCH DE DISTRIBUIÇÃO (SW1) - CISCO IOS
+! Topologia: Segmentação de VLANs, Trunk 802.1Q, STP PortFast e Port-Security
+! Autor: Leonardo de Freitas Pintar
+! ==============================================================================
+
+enable
+configure terminal
+
+hostname SW1-DISTRIBUICAO
+no ip domain-lookup
+service password-encryption
+
+! 1. CRIAÇÃO E NOMEAÇÃO DAS VLANS CORPORATIVAS
+vlan 10
+ name INFRA_TI
+vlan 20
+ name CORPORATIVO
+vlan 30
+ name SERVIDORES
+vlan 99
+ name NATIVA_BLACKHOLE
+exit
+
+! 2. PORTA TRUNK 802.1Q (UPLINK PARA O ROTEADOR R1)
+interface GigabitEthernet0/1
+ description TRUNK_UPLINK_R1
+ switchport mode trunk
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30
+ no shutdown
+exit
+
+! 3. PORTAS DE ACESSO - SETOR DE INFRAESTRUTURA E TI (VLAN 10)
+interface range FastEthernet0/1 - 4
+ description ESTACOES_INFRA_TI
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ no shutdown
+exit
+
+! 4. PORTAS DE ACESSO CORPORATIVO COM SEGURANÇA DE PORTA (PORT-SECURITY)
+interface range FastEthernet0/5 - 15
+ description ESTACOES_USUARIOS_CORP
+ switchport mode access
+ switchport access vlan 20
+ switchport port-security
+ switchport port-security maximum 2
+ switchport port-security mac-address sticky
+ switchport port-security violation restrict
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ no shutdown
+exit
+
+! 5. DESATIVAÇÃO PREVENTIVA DE PORTAS OCIOSAS (HARDENING L2)
+interface range FastEthernet0/16 - 24, GigabitEthernet0/2
+ description PORTAS_DESATIVADAS_SEGURANCA
+ switchport mode access
+ switchport access vlan 99
+ shutdown
+exit
+
+end
+write memory
